@@ -15,7 +15,7 @@ export class CreateAction extends Action<CreateData> {
             totalSupply: 0n,
         })
 
-        await this.ctx.store.insert(contract)
-        this.ctx.log.debug(`Contract ${contract.id} created`)
+        await this.store.insert(contract)
+        this.log.debug(`Contract ${contract.id} created`)
     }
 }

@@ -10,7 +10,7 @@ export interface CreateData {
 
 export class CreateAction extends Action<CreateData> {
     async perform() {
-        const contract = await this.ctx.store.getOrFail(Contract, this.data.contractId)
+        const contract = await this.store.getOrFail(Contract, this.data.contractId)
 
         const token = new Token({
             id: this.data.tokenId,
@@ -20,9 +20,9 @@ export class CreateAction extends Action<CreateData> {
             supply: 0n,
         })
 
-        await this.ctx.store.insert(token)
+        await this.store.insert(token)
 
-        this.ctx.log.debug(`Token ${token.id} created`)
+        this.log.debug(`Token ${token.id} created`)
     }
 }
 
@@ -46,9 +46,9 @@ export interface TransferTokenData {
 
 export class TransferTokenAction extends Action<TransferTokenData> {
     async perform() {
-        const token = await this.ctx.store.getOrFail(Token, this.data.tokenId, {contract: true})
-        const from = await this.ctx.store.getOrFail(Account, this.data.fromId)
-        const to = await this.ctx.store.getOrFail(Account, this.data.toId)
+        const token = await this.store.getOrFail(Token, this.data.tokenId, {contract: true})
+        const from = await this.store.getOrFail(Account, this.data.fromId)
+        const to = await this.store.getOrFail(Account, this.data.toId)
 
         const transfer = new Transfer({
             id: this.data.transferId,
@@ -61,7 +61,7 @@ export class TransferTokenAction extends Action<TransferTokenData> {
             to,
             amount: this.data.amount,
         })
-        await this.ctx.store.insert(transfer)
+        await this.store.insert(transfer)
     }
 }
 
@@ -73,14 +73,14 @@ export interface MintTokenData {
 
 export class MintTokenAction extends Action<MintTokenData> {
     async perform() {
-        const token = await this.ctx.store.getOrFail(Token, this.data.tokenId, {contract: true})
+        const token = await this.store.getOrFail(Token, this.data.tokenId, {contract: true})
         const contract = token.contract
 
         token.supply += this.data.amount
-        await this.ctx.store.upsert(token)
+        await this.store.upsert(token)
 
         contract.totalSupply += this.data.amount
-        await this.ctx.store.upsert(contract)
+        await this.store.upsert(contract)
 
         const burn = new Mint({
             id: this.data.mintId,
@@ -91,9 +91,9 @@ export class MintTokenAction extends Action<MintTokenData> {
             contract,
             amount: this.data.amount,
         })
-        await this.ctx.store.insert(burn)
+        await this.store.insert(burn)
 
-        this.ctx.log.debug(`Token ${token.id} burned`)
+        this.log.debug(`Token ${token.id} burned`)
     }
 }
 
@@ -105,14 +105,14 @@ export interface BurnTokenData {
 
 export class BurnTokenAction extends Action<BurnTokenData> {
     async perform() {
-        const token = await this.ctx.store.getOrFail(Token, this.data.tokenId, {contract: true})
+        const token = await this.store.getOrFail(Token, this.data.tokenId, {contract: true})
         const contract = token.contract
 
         token.supply -= this.data.amount
-        await this.ctx.store.upsert(token)
+        await this.store.upsert(token)
 
         contract.totalSupply -= this.data.amount
-        await this.ctx.store.upsert(contract)
+        await this.store.upsert(contract)
 
         const burn = new Burn({
             id: this.data.burnId,
@@ -123,8 +123,8 @@ export class BurnTokenAction extends Action<BurnTokenData> {
             contract,
             amount: this.data.amount,
         })
-        await this.ctx.store.insert(burn)
+        await this.store.insert(burn)
 
-        this.ctx.log.debug(`Token ${token.id} burned`)
+        this.log.debug(`Token ${token.id} burned`)
     }
 }

@@ -13,7 +13,7 @@ export class CreateAction extends Action<CreateData> {
             address: this.data.address,
         })
 
-        await this.ctx.store.insert(user)
-        this.ctx.log.debug(`Account ${user.id} created`)
+        await this.store.insert(user)
+        this.log.debug(`Account ${user.id} created`)
     }
 }
