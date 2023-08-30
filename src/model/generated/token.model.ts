@@ -20,9 +20,11 @@ export class Token {
     @ManyToOne_(() => Contract, {nullable: true})
     contract!: Contract
 
+    @Index_()
     @Column_("varchar", {length: 7, nullable: false})
     type!: TokenStandard
 
+    @Index_()
     @Column_("numeric", {transformer: marshal.bigintTransformer, nullable: true})
     index!: bigint | undefined | null
 

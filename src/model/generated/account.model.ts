@@ -1,4 +1,4 @@
-import {Entity as Entity_, Column as Column_, PrimaryColumn as PrimaryColumn_, OneToMany as OneToMany_} from "typeorm"
+import {Entity as Entity_, Column as Column_, PrimaryColumn as PrimaryColumn_, Index as Index_, OneToMany as OneToMany_} from "typeorm"
 import {TokenBalance} from "./tokenBalance.model"
 
 @Entity_()
@@ -10,6 +10,7 @@ export class Account {
     @PrimaryColumn_()
     id!: string
 
+    @Index_({unique: true})
     @Column_("text", {nullable: false})
     address!: string
 

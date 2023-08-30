@@ -1,4 +1,4 @@
-import {Entity as Entity_, Column as Column_, PrimaryColumn as PrimaryColumn_, ManyToOne as ManyToOne_, Index as Index_} from "typeorm"
+import {Entity as Entity_, Column as Column_, PrimaryColumn as PrimaryColumn_, Index as Index_, ManyToOne as ManyToOne_} from "typeorm"
 import * as marshal from "./marshal"
 import {Contract} from "./contract.model"
 import {Token} from "./token.model"
@@ -13,9 +13,11 @@ export class Transfer {
     @PrimaryColumn_()
     id!: string
 
+    @Index_()
     @Column_("int4", {nullable: false})
     blockNumber!: number
 
+    @Index_()
     @Column_("timestamp with time zone", {nullable: false})
     timestamp!: Date
 
