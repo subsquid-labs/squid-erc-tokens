@@ -1,0 +1,94 @@
+type Account @entity {
+    id: ID!
+    address: String!
+
+    tokens: [TokenBalance!]! @derivedFrom(field: "account")
+}
+
+type TokenBalance @entity {
+    id: ID!
+    account: Account!
+    token: Token!
+    value: BigInt!
+}
+
+enum TokenStandard {
+    ERC20
+    ERC721
+    ERC1155
+}
+
+type Contract @entity {
+    id: ID!
+    address: String!
+
+    totalSupply: BigInt!
+    interfaces: [TokenStandard!]!
+
+    tokens: [Token!]! @derivedFrom(field: "contract")
+    transfers: [Transfer!]! @derivedFrom(field: "contract")
+}
+
+type Token @entity {
+    id: ID!
+
+    contract: Contract!
+    type: TokenStandard!
+    index: BigInt
+
+    supply: BigInt!
+
+    holders: [TokenBalance!]! @derivedFrom(field: "token")
+
+    mints: [Mint!]! @derivedFrom(field: "token")
+    transfers: [Transfer!]! @derivedFrom(field: "token")
+    burns: [Burn!]! @derivedFrom(field: "token")
+}
+
+interface Action @query {
+    id: ID!
+    blockNumber: Int!
+    timestamp: DateTime!
+    txnHash: String
+
+    contract: Contract!
+    token: Token!
+}
+
+type Transfer implements Action @entity {
+    id: ID!
+    blockNumber: Int!
+    timestamp: DateTime!
+    txnHash: String
+
+    contract: Contract!
+    token: Token!
+
+    from: Account!
+    to: Account!
+    amount: BigInt!
+}
+
+type Mint implements Action @entity {
+    id: ID!
+    blockNumber: Int!
+    timestamp: DateTime!
+    txnHash: String
+
+    contract: Contract!
+    token: Token!
+
+    amount: BigInt!
+}
+
+type Burn implements Action @entity {
+    id: ID!
+    blockNumber: Int!
+    timestamp: DateTime!
+    txnHash: String
+
+    contract: Contract!
+    token: Token!
+
+    amount: BigInt!
+}
