@@ -1,137 +1,161 @@
-import {StoreWithCache} from '@belopash/typeorm-store'
-import {toChecksumAddress} from 'ethereum-checksum-address'
+import { StoreWithCache } from '@belopash/typeorm-store'
+import {
+    Token,
+    TokenBalance,
+    Account,
+    TokenStandard,
+    Contract,
+    Mint,
+    Burn,
+    Transfer
+} from '../model'
+import { TaskQueue } from '../utils/queue'
+import {
+    createContractId,
+    createAccountId,
+    createBalanceId,
+    createTokenId
+} from '../utils/data'
+import { ZERO_ADDRESS } from '../utils/constants'
 import * as erc721 from '../abi/erc721'
-import {ZERO_ADDRESS} from '../constants'
-import {Account, Contract, Token, TokenBalance, TokenStandard} from '../model'
-import {Log} from '../processor'
-import {createAccountId, createBalanceId, createContractId, createTokenId} from '../util'
-import {Mapper} from './base'
+import { ProcessorContext, Log } from '../processor'
 
-export class ERC721TransferMapper extends Mapper<StoreWithCache, Log> {
-    handle(log: Log) {
-        const event = erc721.events.Transfer.decode(log)
+type MappingContext = ProcessorContext<StoreWithCache> & { queue: TaskQueue }
 
-        const contractAddress = toChecksumAddress(log.address)
-        const contractId = createContractId(contractAddress)
-        this.store.defer(Contract, contractId)
+export function handleErc721Transfer(
+    mctx: MappingContext,
+    log: Log
+) {
 
-        const index = event.tokenId
-        const tokenId = createTokenId(contractAddress, index)
-        this.store.defer(Token, tokenId, {contract: true})
+    const event = erc721.events.Transfer.decode(log)
 
-        const fromAddress = event.from
-        const fromAccountId = createAccountId(fromAddress)
-        const fromBalanceId = createBalanceId(fromAddress, contractAddress, index)
-        this.store.defer(TokenBalance, fromBalanceId)
-        this.store.defer(Account, fromAccountId)
+    const contractAddress = log.address
+    const contractId = createContractId(contractAddress)
+    mctx.store.defer(Contract, contractId)
 
-        const toAddress = event.to
-        const toAccountId = createAccountId(toAddress)
-        const toBalanceId = createBalanceId(toAddress, contractAddress, index)
-        this.store.defer(TokenBalance, toBalanceId)
-        this.store.defer(Account, toAccountId)
+    const index = event.tokenId
+    const tokenId = createTokenId(contractAddress, index)
+    mctx.store.defer(Token, tokenId)
 
-        const amount = 1n
+    const fromAddress = event.from
+    const fromAccountId = createAccountId(fromAddress)
+    const fromBalanceId = createBalanceId(fromAddress, contractAddress, index)
+    mctx.store.defer(TokenBalance, fromBalanceId)
+    mctx.store.defer(Account, fromAccountId)
 
-        this.queue.lazy(async () => {
-            const token = await this.store.get(Token, tokenId)
-            if (token == null) {
-                const contract = await this.store.get(Contract, contractId)
-                if (contract == null) {
-                    this.queue.add('contract_create', {
-                        contractId,
-                        address: contractAddress,
-                    })
-                }
+    const toAddress = event.to
+    const toAccountId = createAccountId(toAddress)
+    const toBalanceId = createBalanceId(toAddress, contractAddress, index)
+    mctx.store.defer(TokenBalance, toBalanceId)
+    mctx.store.defer(Account, toAccountId)
 
-                this.queue.add('token_create', {
-                    tokenId,
-                    index,
-                    contractId,
-                    type: TokenStandard.ERC721,
-                })
-            }
-        })
+    const amount = 1n
 
-        this.queue
-            .lazy(async () => {
-                const account = await this.store.get(Account, fromAccountId)
-                if (account == null) {
-                    this.queue.add('account_create', {
-                        accountId: fromAccountId,
-                        address: fromAddress,
-                    })
-                }
-            })
-            .lazy(async () => {
-                const account = await this.store.get(Account, toAccountId)
-                if (account == null) {
-                    this.queue.add('account_create', {
-                        accountId: toAccountId,
-                        address: toAddress,
-                    })
-                }
-            })
-
-        if (fromAddress === ZERO_ADDRESS) {
-            this.queue.add('token_mint', {
-                mintId: log.id,
-                tokenId,
-                amount,
-            })
-        } else {
-            this.queue
-                .lazy(async () => {
-                    const token = await this.store.getOrFail(Token, tokenId)
-                    if (token.supply === 0n) {
-                        this.queue.add('token_mint', {
-                            mintId: log.id,
-                            tokenId,
-                            amount,
-                        })
-                    }
-                })
-                .lazy(async () => {
-                    const balance = await this.store.get(TokenBalance, fromBalanceId)
-                    if (balance != null) {
-                        this.queue.add('balance_change', {
-                            balanceId: fromBalanceId,
-                            amount: -amount,
-                        })
-                    }
-                })
-        }
-
-        if (toAddress === ZERO_ADDRESS && fromAddress !== ZERO_ADDRESS) {
-            this.queue.add('token_burn', {
-                burnId: log.id,
-                tokenId,
-                amount,
-            })
-        } else {
-            this.queue
-                .lazy(async () => {
-                    const balance = await this.store.get(TokenBalance, toBalanceId)
-                    if (balance == null) {
-                        this.queue.add('balance_create', {
-                            balanceId: toBalanceId,
-                            accountId: toAccountId,
-                            tokenId,
-                        })
-                    }
-                })
-                .add('balance_change', {
-                    balanceId: toBalanceId,
-                    amount: 1n,
-                })
-        }
-
-        this.queue.add('token_transfer', {
-            transferId: log.id,
-            fromId: fromAccountId,
-            toId: toAccountId,
-            tokenId,
-            amount: 1n,
-        })
+    if (fromAddress === ZERO_ADDRESS && toAddress === ZERO_ADDRESS) {
+        mctx.log.info(`Skipping a ERC721 Transfer from null to null detected on contract ${log.address} txn ${log.transactionHash}`)
+        return
     }
+
+    mctx.queue.add(async () => {
+
+        const contract = await mctx.store.getOrInsert(Contract, contractId, cid => {
+            return new Contract({
+                id: cid,
+                address: contractAddress,
+                totalSupply: 0n,
+                interfaces: [TokenStandard.ERC721]
+            })
+        })
+        if (contract.interfaces.find(t => t==TokenStandard.ERC721) == null) {
+            contract.interfaces.push(TokenStandard.ERC721)
+        }
+        await mctx.store.upsert(contract)
+
+        const token = await mctx.store.getOrInsert(Token, tokenId, tid => {
+            return new Token({
+                id: tid,
+                contract,
+                type: TokenStandard.ERC20,
+                index,
+                supply: 0n
+            })
+        })
+
+        const fromAccount = await mctx.store.getOrInsert(Account, fromAccountId, aid => {
+            return new Account({
+                id: aid,
+                address: fromAddress
+            })
+        })
+
+        const toAccount = await mctx.store.getOrInsert(Account, toAccountId, aid => {
+            return new Account({
+                id: aid,
+                address: toAddress
+            })
+        })
+
+        const eventEntityParams = {
+            id: log.id,
+            blockNumber: log.block.height,
+            timestamp: new Date(log.block.timestamp),
+            txnHash: log.transactionHash,
+            contract,
+            token,
+            amount
+        }
+
+        if (fromAddress === ZERO_ADDRESS || token.supply === 0n) {
+            if (token.supply === 0n) {
+                mctx.log.info(`Mint of token ${index} from contract ${contractId} doesn't come from null - that breaks ERC721`)
+            }
+            await mctx.store.insert(new Mint(eventEntityParams))
+            contract.totalSupply += amount
+            await mctx.store.upsert(contract)
+            token.supply += amount
+            await mctx.store.upsert(token)
+        }
+        else {
+            // This allows for negative balances.
+            // A negative balance indicates that the address issued a NFT
+            // by just transferring it out, in violation of ERC721
+            const fromBalance = await mctx.store.getOrInsert(TokenBalance, fromBalanceId, id => {
+                return new TokenBalance({
+                    id,
+                    account: fromAccount,
+                    token,
+                    value: 0n
+                })
+            })
+            fromBalance.value -= amount
+            await mctx.store.upsert(fromBalance)
+        }
+
+        if (toAddress === ZERO_ADDRESS) {
+            await mctx.store.insert(new Burn(eventEntityParams))
+            contract.totalSupply -= amount
+            await mctx.store.upsert(contract)
+            token.supply -= amount
+            await mctx.store.upsert(token)
+        }
+        else {
+            const toBalance = await mctx.store.getOrInsert(TokenBalance, toBalanceId, id => {
+                return new TokenBalance({
+                    id,
+                    account: toAccount,
+                    token,
+                    value: 0n
+                })
+            })
+            toBalance.value += amount
+            await mctx.store.upsert(toBalance)
+        }
+
+        await mctx.store.insert(new Transfer({
+            ...eventEntityParams,
+            from: fromAccount,
+            to: toAccount,
+        }))
+
+    })
 }

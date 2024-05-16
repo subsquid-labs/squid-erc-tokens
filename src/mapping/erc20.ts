@@ -1,3 +1,4 @@
+import { StoreWithCache } from '@belopash/typeorm-store'
 import {
     Token,
     TokenBalance,
@@ -8,7 +9,6 @@ import {
     Burn,
     Transfer
 } from '../model'
-import { StoreWithCache } from '@belopash/typeorm-store'
 import { TaskQueue } from '../utils/queue'
 import {
     createContractId,
@@ -26,6 +26,7 @@ export function handleErc20Transfer(
     mctx: MappingContext,
     log: Log
 ) {
+
     const event = erc20.events.Transfer.decode(log)
 
     const contractAddress = log.address
@@ -64,6 +65,10 @@ export function handleErc20Transfer(
                 interfaces: [TokenStandard.ERC20]
             })
         })
+        if (contract.interfaces.find(t => t==TokenStandard.ERC20) == null) {
+            contract.interfaces.push(TokenStandard.ERC20)
+        }
+        await mctx.store.upsert(contract)
 
         const token = await mctx.store.getOrInsert(Token, tokenId, tid => {
             return new Token({
