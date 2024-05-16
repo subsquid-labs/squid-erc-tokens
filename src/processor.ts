@@ -1,4 +1,4 @@
-import {lookupArchive} from '@subsquid/archive-registry'
+import assert from 'assert'
 import {
     BlockHeader,
     DataHandlerContext,
@@ -9,14 +9,18 @@ import {
 } from '@subsquid/evm-processor'
 import * as erc721 from './abi/erc721'
 import * as erc20 from './abi/erc20'
-import * as erc1155 from './abi/erc1155'
+
+assert(erc20.events.Transfer.topic===erc721.events.Transfer.topic, 'ERC20 and ERC721 topics are expected to be the same in the TS ABI and they are not')
 
 export const processor = new EvmBatchProcessor()
-    .setDataSource({
-        archive: lookupArchive('moonriver', {type: 'EVM'}),
-        chain: 'https://moonriver-rpc.dwellir.com',
+    .setGateway('https://v2.archive.subsquid.io/network/moonriver-mainnet')
+    .setRpcEndpoint({
+        url: 'https://moonriver-rpc.dwellir.com',
+        rateLimit: 50 // requests per second
     })
-    .setFinalityConfirmation(75)
+    // most networks will need a higher value here
+    // e.g. Polygon needs at least 400 blocks to finality
+    .setFinalityConfirmation(5)
     .setFields({
         log: {
             address: true,
@@ -26,10 +30,7 @@ export const processor = new EvmBatchProcessor()
         },
     })
     .addLog({
-        topic0: [erc20.events.Transfer.topic],
-    })
-    .addLog({
-        topic0: [erc721.events.Transfer.topic],
+        topic0: [erc721.events.Transfer.topic]
     })
 
 export type Fields = EvmBatchProcessorFields<typeof processor>

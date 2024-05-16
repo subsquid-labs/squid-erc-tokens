@@ -1,81 +1,37 @@
-import {TypeormDatabaseWithCache} from '@belopash/typeorm-store'
-import {Logger} from '@subsquid/logger'
-import {withErrorContext} from '@subsquid/util-internal'
-import * as erc20 from './abi/erc20'
+import {TypeormDatabaseWithCache, StoreWithCache} from '@belopash/typeorm-store'
+//import {withErrorContext} from '@subsquid/util-internal'
 import * as erc721 from './abi/erc721'
-import {ActionQueue} from './action/actionQueue'
-import {ERC20TransferMapper, ERC721TransferMapper, Mapper, MapperConstructor} from './mapping'
-import {processor} from './processor'
+import { handleErc20Transfer } from './mapping/erc20'
+//import { handleErc721Transfer } from './mapping/erc721'
+import { processor, ProcessorContext } from './processor'
+import { TaskQueue } from './utils/queue'
 
-processor.run(new TypeormDatabaseWithCache({supportHotBlocks: true}), async (ctx) => {
-    const queue = new ActionQueue({
-        log: ctx.log,
-        store: ctx.store,
-    })
+type MappingContext = ProcessorContext<StoreWithCache> & { queue: TaskQueue }
 
-    const handler = new Handler({
-        queue,
-        log: ctx.log,
-        store: ctx.store,
-    })
+processor.run(new TypeormDatabaseWithCache({supportHotBlocks: true}), async ctx => {
+    const mctx: MappingContext = {
+        ...ctx,
+        queue: new TaskQueue()
+    }
 
     for (const block of ctx.blocks) {
-        queue.setBlock(block.header)
         for (const log of block.logs) {
-            queue.setTransaction(log.transaction)
             switch (log.topics[0]) {
-                case erc20.events.Transfer.topic:
-                case erc721.events.Transfer.topic: {
-                    try {
-                        handler.as(ERC721TransferMapper).handle(log)
-                    } catch (e) {
-                        const isDecodingError = e instanceof RangeError
-                        if (!isDecodingError) throw e
-
-                        try {
-                            handler.as(ERC20TransferMapper).handle(log)
-                        } catch (e: any) {
-                            const isDecodingError = e instanceof RangeError
-                            if (!isDecodingError)
-                                withErrorContext({
-                                    block: block.header.height,
-                                    txHash: log.transactionHash,
-                                    log: log.logIndex,
-                                })(e)
-                        }
+                case erc721.events.Transfer.topic: { // same as erc20.events.Transfer.topic, so we need to tell them apart
+                    if (log.topics.length === 4) { // likely ERC721
+//                        handleErc721Transfer(mctx, log)
+                    }
+                    else if (log.topics.length === 3) { // likely ERC20
+                        handleErc20Transfer(mctx, log)
+                    }
+                    else {
+                        ctx.log.info(`Skipping a Transfer(address,address,uint256) event from ${log.address} not recognized as ERC20 or ERC721. Txn ${log.transactionHash}`)
                     }
                     break
                 }
             }
         }
-        if (queue.size >= 300_000) {
-            await queue.process()
-            await ctx.store.flush()
-            ctx.log.info('saved')
-        }
     }
 
-    await queue.process()
-    await ctx.store.flush()
+    await mctx.queue.run()
 })
-
-class Handler<Store> {
-    constructor(
-        protected config: {
-            log: Logger
-            store: Store
-            queue: ActionQueue
-        }
-    ) {}
-
-    private mappers: Map<MapperConstructor<Store, any>, Mapper<Store, any>> = new Map()
-
-    as<Item>(mapperConstructor: MapperConstructor<Store, Item>) {
-        let mapper = this.mappers.get(mapperConstructor)
-        if (mapper == null) {
-            mapper = new mapperConstructor(this.config)
-            this.mappers.set(mapperConstructor, mapper)
-        }
-        return mapper
-    }
-}

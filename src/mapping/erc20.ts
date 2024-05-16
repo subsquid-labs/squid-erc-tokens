@@ -1,124 +1,150 @@
-import {StoreWithCache} from '@belopash/typeorm-store'
-import {Log} from '../processor'
-import {Mapper} from './base'
-import {toChecksumAddress} from 'ethereum-checksum-address'
-import {Token, TokenBalance, Account, TokenStandard, Contract} from '../model'
-import {createContractId, createTokenId, createAccountId, createBalanceId} from '../util'
+import {
+    Token,
+    TokenBalance,
+    Account,
+    TokenStandard,
+    Contract,
+    Mint,
+    Burn,
+    Transfer
+} from '../model'
+import { StoreWithCache } from '@belopash/typeorm-store'
+import { TaskQueue } from '../utils/queue'
+import {
+    createContractId,
+    createAccountId,
+    createBalanceId,
+    createTokenId
+} from '../utils/data'
+import { ZERO_ADDRESS } from '../utils/constants'
 import * as erc20 from '../abi/erc20'
-import {ZERO_ADDRESS} from '../constants'
+import { ProcessorContext, Log } from '../processor'
 
-export class ERC20TransferMapper extends Mapper<StoreWithCache, Log> {
-    handle(log: Log) {
-        const event = erc20.events.Transfer.decode(log)
+type MappingContext = ProcessorContext<StoreWithCache> & { queue: TaskQueue }
 
-        const contractAddress = toChecksumAddress(log.address)
-        const contractId = createContractId(contractAddress)
-        this.store.defer(Contract, contractId)
+export function handleErc20Transfer(
+    mctx: MappingContext,
+    log: Log
+) {
+    const event = erc20.events.Transfer.decode(log)
 
-        const tokenId = createTokenId(contractAddress)
-        this.store.defer(Token, tokenId, {contract: true})
+    const contractAddress = log.address
+    const contractId = createContractId(contractAddress)
+    mctx.store.defer(Contract, contractId)
 
-        const fromAddress = event.from
-        const fromAccountId = createAccountId(fromAddress)
-        const fromBalanceId = createBalanceId(fromAddress, contractAddress)
-        this.store.defer(TokenBalance, fromBalanceId)
-        this.store.defer(Account, fromAccountId)
+    const tokenId = createTokenId(contractAddress)
+    mctx.store.defer(Token, tokenId)
 
-        const toAddress = event.to
-        const toAccountId = createAccountId(toAddress)
-        const toBalanceId = createBalanceId(toAddress, contractAddress)
-        this.store.defer(TokenBalance, toBalanceId)
-        this.store.defer(Account, toAccountId)
+    const fromAddress = event.from
+    const fromAccountId = createAccountId(fromAddress)
+    const fromBalanceId = createBalanceId(fromAddress, contractAddress)
+    mctx.store.defer(TokenBalance, fromBalanceId)
+    mctx.store.defer(Account, fromAccountId)
 
-        const amount = event.value
+    const toAddress = event.to
+    const toAccountId = createAccountId(toAddress)
+    const toBalanceId = createBalanceId(toAddress, contractAddress)
+    mctx.store.defer(TokenBalance, toBalanceId)
+    mctx.store.defer(Account, toAccountId)
 
-        this.queue.lazy(async () => {
-            const token = await this.store.get(Token, tokenId)
-            if (token == null) {
-                const contract = await this.store.get(Contract, contractId)
-                if (contract == null) {
-                    this.queue.add('contract_create', {
-                        contractId,
-                        address: contractAddress,
-                    })
-                }
+    const amount = event.value
 
-                this.queue.add('token_create', {
-                    tokenId,
-                    contractId,
-                    type: TokenStandard.ERC20,
-                })
-            }
+    if (fromAddress === ZERO_ADDRESS && toAddress === ZERO_ADDRESS) {
+        mctx.log.info(`Skipping a ERC20 Transfer from null to null detected on contract ${log.address} txn ${log.transactionHash}`)
+        return
+    }
+
+    mctx.queue.add(async () => {
+
+        const contract = await mctx.store.getOrInsert(Contract, contractId, cid => {
+            return new Contract({
+                id: cid,
+                address: contractAddress,
+                totalSupply: 0n,
+                interfaces: [TokenStandard.ERC20]
+            })
         })
 
-        this.queue
-            .lazy(async () => {
-                const account = await this.store.get(Account, fromAccountId)
-                if (account == null) {
-                    this.queue.add('account_create', {
-                        accountId: fromAccountId,
-                        address: fromAddress,
-                    })
-                }
+        const token = await mctx.store.getOrInsert(Token, tokenId, tid => {
+            return new Token({
+                id: tid,
+                contract,
+                type: TokenStandard.ERC20,
+                supply: 0n
             })
-            .lazy(async () => {
-                const account = await this.store.get(Account, toAccountId)
-                if (account == null) {
-                    this.queue.add('account_create', {
-                        accountId: toAccountId,
-                        address: toAddress,
-                    })
-                }
+        })
+
+        const fromAccount = await mctx.store.getOrInsert(Account, fromAccountId, aid => {
+            return new Account({
+                id: aid,
+                address: fromAddress
             })
+        })
+
+        const toAccount = await mctx.store.getOrInsert(Account, toAccountId, aid => {
+            return new Account({
+                id: aid,
+                address: toAddress
+            })
+        })
+
+        const eventEntityParams = {
+            id: log.id,
+            blockNumber: log.block.height,
+            timestamp: new Date(log.block.timestamp),
+            txnHash: log.transactionHash,
+            contract,
+            token,
+            amount
+        }
 
         if (fromAddress === ZERO_ADDRESS) {
-            this.queue.add('token_mint', {
-                mintId: log.id,
-                tokenId,
-                amount,
+            await mctx.store.insert(new Mint(eventEntityParams))
+            contract.totalSupply += amount
+            await mctx.store.upsert(contract)
+            token.supply += amount
+            await mctx.store.upsert(token)
+        }
+        else {
+            // this allows for negative balances
+            // if you're sure you won't be getting these, use getOrFail() instead
+            const fromBalance = await mctx.store.getOrInsert(TokenBalance, fromBalanceId, id => {
+                return new TokenBalance({
+                    id,
+                    account: fromAccount,
+                    token,
+                    value: 0n
+                })
             })
-        } else {
-            this.queue.lazy(async () => {
-                const balance = await this.store.get(TokenBalance, fromBalanceId)
-                if (balance != null) {
-                    this.queue.add('balance_change', {
-                        balanceId: fromBalanceId,
-                        amount: -amount,
-                    })
-                }
-            })
+            fromBalance.value -= amount
+            await mctx.store.upsert(fromBalance)
         }
 
         if (toAddress === ZERO_ADDRESS) {
-            this.queue.add('token_burn', {
-                burnId: log.id,
-                tokenId,
-                amount,
+            await mctx.store.insert(new Burn(eventEntityParams))
+            contract.totalSupply -= amount
+            await mctx.store.upsert(contract)
+            token.supply -= amount
+            await mctx.store.upsert(token)
+        }
+        else {
+            const toBalance = await mctx.store.getOrInsert(TokenBalance, toBalanceId, id => {
+                return new TokenBalance({
+                    id,
+                    account: toAccount,
+                    token,
+                    value: 0n
+                })
             })
-        } else {
-            this.queue
-                .lazy(async () => {
-                    const balance = await this.store.get(TokenBalance, toBalanceId)
-                    if (balance == null) {
-                        this.queue.add('balance_create', {
-                            balanceId: toBalanceId,
-                            accountId: toAccountId,
-                            tokenId,
-                        })
-                    }
-                })
-                .add('balance_change', {
-                    balanceId: toBalanceId,
-                    amount,
-                })
+            toBalance.value += amount
+            await mctx.store.upsert(toBalance)
         }
 
-        this.queue.add('token_transfer', {
-            transferId: log.id,
-            fromId: fromAccountId,
-            toId: toAccountId,
-            tokenId,
-            amount,
-        })
-    }
+        await mctx.store.insert(new Transfer({
+            ...eventEntityParams,
+            from: fromAccount,
+            to: toAccount,
+        }))
+
+    })
 }

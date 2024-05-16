@@ -1,9 +1,5 @@
-import assert from 'assert'
-import {checkAddressChecksum} from 'ethereum-checksum-address'
-
 export function createAccountId(address: string) {
-    assert(checkAddressChecksum(address), 'address should be EVM address')
-    return address.toLowerCase()
+    return address
 }
 
 export function createBalanceId(accountAddress: string, contractAddress: string, tokenIndex?: bigint) {
@@ -11,8 +7,7 @@ export function createBalanceId(accountAddress: string, contractAddress: string,
 }
 
 export function createContractId(address: string) {
-    assert(checkAddressChecksum(address), 'address should be EVM address')
-    return address.toLowerCase()
+    return address
 }
 
 export function createTokenId(contractAddress: string, index?: bigint) {
