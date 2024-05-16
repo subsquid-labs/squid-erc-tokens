@@ -1,4 +1,4 @@
-import {Entity as Entity_, Column as Column_, PrimaryColumn as PrimaryColumn_, Index as Index_, OneToMany as OneToMany_} from "typeorm"
+import {Entity as Entity_, Column as Column_, PrimaryColumn as PrimaryColumn_, StringColumn as StringColumn_, Index as Index_, OneToMany as OneToMany_} from "@subsquid/typeorm-store"
 import {TokenBalance} from "./tokenBalance.model"
 
 @Entity_()
@@ -11,7 +11,7 @@ export class Account {
     id!: string
 
     @Index_({unique: true})
-    @Column_("text", {nullable: false})
+    @StringColumn_({nullable: false})
     address!: string
 
     @OneToMany_(() => TokenBalance, e => e.account)

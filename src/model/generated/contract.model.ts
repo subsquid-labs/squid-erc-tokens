@@ -1,5 +1,4 @@
-import {Entity as Entity_, Column as Column_, PrimaryColumn as PrimaryColumn_, Index as Index_, OneToMany as OneToMany_} from "typeorm"
-import * as marshal from "./marshal"
+import {Entity as Entity_, Column as Column_, PrimaryColumn as PrimaryColumn_, StringColumn as StringColumn_, Index as Index_, BigIntColumn as BigIntColumn_, OneToMany as OneToMany_} from "@subsquid/typeorm-store"
 import {TokenStandard} from "./_tokenStandard"
 import {Token} from "./token.model"
 import {Transfer} from "./transfer.model"
@@ -14,10 +13,10 @@ export class Contract {
     id!: string
 
     @Index_({unique: true})
-    @Column_("text", {nullable: false})
+    @StringColumn_({nullable: false})
     address!: string
 
-    @Column_("numeric", {transformer: marshal.bigintTransformer, nullable: false})
+    @BigIntColumn_({nullable: false})
     totalSupply!: bigint
 
     @Column_("varchar", {length: 7, array: true, nullable: false})
